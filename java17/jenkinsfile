@@ -1,0 +1,107 @@
+
+pipeline {
+    agent {
+        kubernetes {
+            inheritFrom 'gradle'
+            retries 2
+        }
+    }
+    environment { 
+        repository = "harbor.jmjang.net/platform_engineering/was"  //docker hub id와 repository 이름
+        DOCKERHUB_CREDENTIALS = credentials('harbor-secret') // jenkins에 등록해 놓은 docker hub credentials 이름
+        dockerImage = '' 
+    }
+    stages{
+        stage('start'){
+            steps{
+                container('gradle'){
+                    slackSend(channel: '#장주명-테스트', color:'#FFFF00', message:"STARTED Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' (${env.BUILD_URL})")
+                }
+            }
+        }
+        stage('gitCheckout'){
+            steps{
+                container('gradle'){
+                    git branch: 'master', credentialsId: 'github_access_token', url: 'https://github.com/C0deWave/plaform-engineering.git'
+                }
+            }
+        }
+        stage('test'){
+            steps{
+                container('gradle'){
+                    script{
+                        sh 'gradle test > result'
+                        TEST_RESULT = sh(script: "cat result | grep -E ' > |BUILD|tasks'", returnStdout: true).toString().trim()
+                        slackSend(channel: '#장주명-테스트', color:'#FFFF00', message: "${TEST_RESULT}")
+                    }
+                }
+            }
+        }
+        stage('build'){
+            steps{
+                container('gradle'){
+                    sh 'gradle build'
+                }
+            }
+        }
+        stage('Login'){
+            steps{
+                container('docker'){
+                    sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR https://harbor.jmjang.net --password-stdin ' // docker hub 로그인
+                }
+            }
+        }
+        stage('dockerBuild'){
+            steps{
+                container('docker'){
+                    sh 'pwd'
+                    sh 'docker build -t $repository:$BUILD_NUMBER --file ./dockerfile .' // docker build
+                    sh 'docker build -t $repository:latest --file ./dockerfile .' // docker build
+                }
+            }
+        }
+        stage('Deploy our image') { 
+            steps { 
+                container('docker'){
+                    sh 'docker push $repository:$BUILD_NUMBER' //docker push
+                    sh 'docker push $repository:latest' //docker push
+                }
+            } 
+        }
+    }
+    post{
+        always {
+            archiveArtifacts artifacts: 'build/libs/**/*.jar', fingerprint: true
+        }
+        success {
+            slackSend (
+                channel: '#장주명-테스트', 
+                color: '#00FF00', 
+                message: """SUCCESS: Job ${env.JOB_NAME} [${env.BUILD_NUMBER}] (${env.BUILD_URL}) """
+            )
+        }
+        failure {
+            container('gradle'){
+                script{
+                    TEST_RESULT = sh(script: "cat result ", returnStdout: true).toString().trim()
+                    slackSend(channel: '#장주명-테스트', color:'#FF0000', message: "${TEST_RESULT}")
+                    slackSend (
+                        channel: '#장주명-테스트', 
+                        color: '#FF0000', 
+                        message: "FAIL: Job ${env.JOB_NAME} [${env.BUILD_NUMBER}] (${env.BUILD_URL})"
+                    )
+                }
+            }
+        }
+    }
+}
+
+
+
+
+
+
+
+
+
+
