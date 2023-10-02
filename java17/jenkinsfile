@@ -3,6 +3,8 @@ pipeline {
     agent {
         kubernetes {
             inheritFrom 'gradle'
+            idleMinutes 10
+            label "platform-engineering"
             retries 2
         }
     }
